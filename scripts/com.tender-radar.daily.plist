@@ -6,7 +6,7 @@
     <string>com.tender-radar.daily</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/cherny_shevv/Documents/Projects/tender-radar/scripts/run_daily.sh</string>
+        <string>/Users/cherny_shevv/Projects/tender-radar/scripts/run_daily.sh</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -16,8 +16,8 @@
         <integer>15</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/cherny_shevv/Documents/Projects/tender-radar/logs/launchd.out.log</string>
+    <string>/Users/cherny_shevv/Projects/tender-radar/logs/launchd.out.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/cherny_shevv/Documents/Projects/tender-radar/logs/launchd.err.log</string>
+    <string>/Users/cherny_shevv/Projects/tender-radar/logs/launchd.err.log</string>
 </dict>
 </plist>

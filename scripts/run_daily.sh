@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Ежедневный сбор контрактов за последние сутки.
 # cron (VPN должен быть включён — сайт доступен из-под него):
-#   15 9 * * * /Users/cherny_shevv/Documents/Projects/tender-radar/scripts/run_daily.sh
+#   15 9 * * * /Users/cherny_shevv/Projects/tender-radar/scripts/run_daily.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$ROOT/logs"
