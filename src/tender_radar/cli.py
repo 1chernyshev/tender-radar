@@ -8,7 +8,7 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from .client import EisClient
+from .client import BlockedError, EisClient
 from .db import Database
 from .parsers import parse_contract_card, parse_contract_search
 
@@ -43,6 +43,14 @@ def _parse_date(value: str) -> date:
 
 
 def cmd_fetch(args: argparse.Namespace) -> None:
+    try:
+        _fetch(args)
+    except BlockedError as exc:
+        logging.error("%s. Следующая попытка — при следующем запуске.", exc)
+        raise SystemExit(0)
+
+
+def _fetch(args: argparse.Namespace) -> None:
     client = EisClient(delay=args.delay, raw_dir=RAW_DIR if args.keep_raw else None)
     db = Database(DB_PATH)
     date_to = _parse_date(args.date_to) if args.date_to else date.today()

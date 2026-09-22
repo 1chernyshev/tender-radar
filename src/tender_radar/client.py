@@ -25,6 +25,14 @@ USER_AGENT = (
 )
 
 
+class BlockedError(RuntimeError):
+    """ЕИС временно заблокировал IP за автоматический сбор.
+
+    Повторять запросы в этом состоянии бессмысленно и вредно: сбор
+    прекращается до следующего запуска.
+    """
+
+
 class EisClient:
     def __init__(self, delay: float = 2.0, retries: int = 3, raw_dir: Path | None = None):
         self.delay = delay
@@ -45,12 +53,18 @@ class EisClient:
             self._throttle()
             try:
                 resp = self.session.get(url, params=params, timeout=60)
+                if resp.status_code == 403 or "подозрительная активность" in resp.text:
+                    raise BlockedError(
+                        "ЕИС заблокировал IP за автоматический сбор; сбор остановлен"
+                    )
                 if resp.status_code == 200 and len(resp.text) > 1000:
                     if self.raw_dir and save_as:
                         self.raw_dir.mkdir(parents=True, exist_ok=True)
                         (self.raw_dir / save_as).write_text(resp.text, encoding="utf-8")
                     return resp.text
                 log.warning("GET %s -> %s (%d bytes), attempt %d", resp.url, resp.status_code, len(resp.text), attempt)
+            except BlockedError:
+                raise
             except requests.RequestException as exc:
                 log.warning("GET %s failed: %s, attempt %d", url, exc, attempt)
             time.sleep(self.delay * attempt * 2)

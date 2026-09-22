@@ -12,5 +12,5 @@ if [[ -f "$ROOT/data/PAUSED" ]]; then
 fi
 
 cd "$ROOT/src"
-"$ROOT/.venv/bin/python" -W ignore -m tender_radar fetch --pages 5 --days 1 --cards \
+"$ROOT/.venv/bin/python" -W ignore -m tender_radar fetch --pages 3 --days 1 --cards --delay 5 \
   >> "$ROOT/logs/fetch_$(date +%Y-%m-%d).log" 2>&1
