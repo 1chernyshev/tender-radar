@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import argparse
 import logging
-from datetime import date, timedelta
+import time
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .client import EisClient
@@ -37,17 +38,32 @@ def search_params(page: int, date_from: date, date_to: date, per_page: int = 50)
     }
 
 
+def _parse_date(value: str) -> date:
+    return datetime.strptime(value, "%d.%m.%Y").date()
+
+
 def cmd_fetch(args: argparse.Namespace) -> None:
     client = EisClient(delay=args.delay, raw_dir=RAW_DIR if args.keep_raw else None)
     db = Database(DB_PATH)
-    date_to = date.today()
-    date_from = date_to - timedelta(days=args.days)
+    date_to = _parse_date(args.date_to) if args.date_to else date.today()
+    date_from = _parse_date(args.date_from) if args.date_from else date_to - timedelta(days=args.days)
     found = new_cards = 0
     for page in range(1, args.pages + 1):
-        html = client.get(SEARCH_PATH, search_params(page, date_from, date_to), save_as=f"search_p{page}.html")
-        rows = parse_contract_search(html)
+        rows = []
+        # ЕИС иногда отдает страницу поиска без результатов, хотя контракты есть.
+        # Пустая первая страница — повод повторить запрос, а не считать, что данных нет.
+        attempts = 3 if page == 1 else 1
+        for attempt in range(1, attempts + 1):
+            html = client.get(SEARCH_PATH, search_params(page, date_from, date_to), save_as=f"search_p{page}.html")
+            rows = parse_contract_search(html)
+            if rows or attempt == attempts:
+                break
+            logging.warning("page %d: пусто, повтор %d/%d", page, attempt, attempts - 1)
+            time.sleep(args.delay * 5 * attempt)
         logging.info("page %d: %d contracts", page, len(rows))
         if not rows:
+            if page == 1:
+                logging.error("поиск за %s..%s вернул пусто после %d попыток", date_from, date_to, attempts)
             break
         for row in rows:
             found += 1
@@ -85,6 +101,8 @@ def main() -> None:
     f = sub.add_parser("fetch", help="fetch recent contracts from the ЕИС registry")
     f.add_argument("--pages", type=int, default=1)
     f.add_argument("--days", type=int, default=1, help="lookback window for publish date")
+    f.add_argument("--date-from", help="начало периода публикации, ДД.ММ.ГГГГ (для добора пропусков)")
+    f.add_argument("--date-to", help="конец периода публикации, ДД.ММ.ГГГГ")
     f.add_argument("--delay", type=float, default=2.0, help="seconds between requests")
     f.add_argument("--cards", action="store_true", help="also fetch contract cards (suppliers)")
     f.add_argument("--keep-raw", action="store_true", help="save raw HTML to data/raw")
