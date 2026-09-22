@@ -70,6 +70,22 @@ def parse_contract_search(html: str) -> list[dict]:
     return rows
 
 
+def parse_total_records(html: str) -> tuple[int | None, bool]:
+    """Сколько записей нашел поиск.
+
+    ЕИС не показывает точное число для больших выдач: вместо него
+    выводится «более 10 000 записей». Возвращаем (число, точное ли оно).
+    """
+    soup = BeautifulSoup(html, "lxml")
+    raw = _text(soup.select_one("div.search-results__total"))
+    if not raw:
+        return None, False
+    digits = re.sub(r"[^\d]", "", raw.split("запис")[0])
+    if not digits:
+        return None, False
+    return int(digits), "более" not in raw.lower()
+
+
 def parse_contract_card(html: str) -> dict:
     """Parse a contract card (common-info page) into a flat dict."""
     soup = BeautifulSoup(html, "lxml")

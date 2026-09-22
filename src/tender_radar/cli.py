@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 import logging
+import random
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .client import BlockedError, EisClient
 from .db import Database
-from .parsers import parse_contract_card, parse_contract_search
+from .parsers import parse_contract_card, parse_contract_search, parse_total_records
 
 ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = ROOT / "data" / "tender_radar.db"
@@ -56,23 +57,50 @@ def _fetch(args: argparse.Namespace) -> None:
     date_to = _parse_date(args.date_to) if args.date_to else date.today()
     date_from = _parse_date(args.date_from) if args.date_from else date_to - timedelta(days=args.days)
     found = new_cards = 0
-    for page in range(1, args.pages + 1):
-        rows = []
-        # ЕИС иногда отдает страницу поиска без результатов, хотя контракты есть.
-        # Пустая первая страница — повод повторить запрос, а не считать, что данных нет.
-        attempts = 3 if page == 1 else 1
+
+    def load_page(page: int, retry_empty: bool) -> list[dict]:
+        """Страница выдачи; пустой ответ на первой странице — повод повторить."""
+        attempts = 3 if retry_empty else 1
+        rows: list[dict] = []
         for attempt in range(1, attempts + 1):
-            html = client.get(SEARCH_PATH, search_params(page, date_from, date_to), save_as=f"search_p{page}.html")
+            html = client.get(SEARCH_PATH, search_params(page, date_from, date_to),
+                              save_as=f"search_p{page}.html")
             rows = parse_contract_search(html)
+            if attempt == 1:
+                load_page.last_html = html
             if rows or attempt == attempts:
                 break
-            logging.warning("page %d: пусто, повтор %d/%d", page, attempt, attempts - 1)
+            logging.warning("страница %d: пусто, повтор %d/%d", page, attempt, attempts - 1)
             time.sleep(args.delay * 5 * attempt)
-        logging.info("page %d: %d contracts", page, len(rows))
+        return rows
+
+    # Первая страница нужна всегда: по ней видно, сколько всего записей в выдаче.
+    first_rows = load_page(1, retry_empty=True)
+    if not first_rows:
+        logging.error("поиск за %s..%s вернул пусто", date_from, date_to)
+        db.log_fetch(args.pages, 0, 0, f"{date_from}..{date_to} пусто")
+        db.commit()
+        return
+    total, exact = parse_total_records(load_page.last_html)
+    per_page = 50
+    max_page = max(1, (total + per_page - 1) // per_page) if total else args.pages
+    logging.info("в выдаче %s%s записей, страниц ~%d",
+                 "" if exact else "более ", total, max_page)
+
+    # Случайная выборка страниц вместо первых подряд: первые страницы отсортированы
+    # по дате обновления и не представляют выдачу целиком. Зерно — дата периода,
+    # чтобы повторный запуск за тот же день брал те же страницы.
+    rng = random.Random(f"{date_from}..{date_to}")
+    pool = [p for p in range(2, max_page + 1)]
+    rng.shuffle(pool)
+    pages = [1] + pool[: max(0, args.pages - 1)]
+    logging.info("отобраны страницы: %s", pages)
+
+    for page in pages:
+        rows = first_rows if page == 1 else load_page(page, retry_empty=False)
+        logging.info("страница %d: %d контрактов", page, len(rows))
         if not rows:
-            if page == 1:
-                logging.error("поиск за %s..%s вернул пусто после %d попыток", date_from, date_to, attempts)
-            break
+            continue
         for row in rows:
             found += 1
             db.upsert_summary(row)
@@ -92,7 +120,8 @@ def _fetch(args: argparse.Namespace) -> None:
                              card["suppliers"][0]["inn"] if card["suppliers"] else "-",
                              card["price"] or 0, card["advance_pct"])
             db.commit()
-    db.log_fetch(args.pages, found, new_cards, f"{date_from}..{date_to}")
+    db.log_fetch(args.pages, found, new_cards,
+                 f"{date_from}..{date_to} страницы {pages} из ~{max_page}")
     db.commit()
     logging.info("done: found %d, new cards %d; stats %s", found, new_cards, db.stats())
 
