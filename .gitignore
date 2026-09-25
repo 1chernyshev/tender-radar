@@ -8,3 +8,6 @@ data/*.html
 .env
 *.token
 logs/
+
+# служебный флаг паузы
+data/PAUSED
