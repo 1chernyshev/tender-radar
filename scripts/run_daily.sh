@@ -13,5 +13,10 @@ fi
 
 cd "$ROOT/src"
 # caffeinate не дает Mac уснуть, пока идет сбор
-caffeinate -i "$ROOT/.venv/bin/python" -W ignore -m tender_radar fetch --pages 3 --days 1 --cards --delay 5 --keep-raw \
+caffeinate -i "$ROOT/.venv/bin/python" -W ignore -m tender_radar fetch --pages 2 --days 1 --cards --delay 5 --keep-raw \
+  >> "$ROOT/logs/fetch_$(date +%Y-%m-%d).log" 2>&1
+
+# Добор контактов поставщиков, собранных до исправления разбора колонок.
+# Идет после основного сбора, начиная с самых крупных контрактов.
+caffeinate -i "$ROOT/.venv/bin/python" -W ignore -m tender_radar backfill-contacts --limit 40 --delay 6 \
   >> "$ROOT/logs/fetch_$(date +%Y-%m-%d).log" 2>&1

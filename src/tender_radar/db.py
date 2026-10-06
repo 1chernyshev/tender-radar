@@ -131,6 +131,31 @@ class Database:
                 (card["reestr_number"], s["inn"]),
             )
 
+    def suppliers_without_email(self, limit: int) -> list[tuple[str, str, float]]:
+        """Поставщики без почты, начиная с самых крупных контрактов."""
+        cur = self.conn.execute(
+            """SELECT cs.inn, c.reestr_number, c.price
+                 FROM contract_suppliers cs
+                 JOIN contracts c ON c.reestr_number = cs.reestr_number
+                 JOIN suppliers s ON s.inn = cs.inn
+                WHERE s.email = ''
+                  AND c.price IS NOT NULL
+                GROUP BY cs.inn
+                HAVING c.price = MAX(c.price)
+                ORDER BY c.price DESC
+                LIMIT ?""",
+            (limit,),
+        )
+        return [(r["inn"], r["reestr_number"], r["price"]) for r in cur.fetchall()]
+
+    def update_supplier_contacts(self, supplier: dict) -> None:
+        self.conn.execute(
+            """UPDATE suppliers SET phone = :phone, email = :email,
+                   address = :address, country = :country
+                 WHERE inn = :inn""",
+            supplier,
+        )
+
     def log_fetch(self, pages: int, found: int, new_cards: int, note: str = "") -> None:
         self.conn.execute(
             "INSERT INTO fetch_log (pages, found, new_cards, note) VALUES (?, ?, ?, ?)",

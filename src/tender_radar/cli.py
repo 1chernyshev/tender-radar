@@ -126,6 +126,43 @@ def _fetch(args: argparse.Namespace) -> None:
     logging.info("done: found %d, new cards %d; stats %s", found, new_cards, db.stats())
 
 
+def cmd_backfill(args: argparse.Namespace) -> None:
+    """Добор контактов поставщиков, собранных до исправления разбора колонок.
+
+    Контракты не трогаем, обновляем только карточку поставщика. Сначала идут
+    те, у кого самый крупный контракт: именно они интересны банку.
+    """
+    try:
+        _backfill(args)
+    except BlockedError as exc:
+        logging.error("%s. Следующая попытка - при следующем запуске.", exc)
+        raise SystemExit(0)
+
+
+def _backfill(args: argparse.Namespace) -> None:
+    client = EisClient(delay=args.delay, raw_dir=RAW_DIR if args.keep_raw else None)
+    db = Database(DB_PATH)
+    rows = db.suppliers_without_email(args.limit)
+    if not rows:
+        logging.info("поставщиков без почты не осталось")
+        return
+    logging.info("добираю контакты: %d поставщиков", len(rows))
+    updated = 0
+    for inn, reestr_number, price in rows:
+        html = client.get(CARD_PATH, {"reestrNumber": reestr_number},
+                          save_as=f"card_{reestr_number}.html")
+        card = parse_contract_card(html)
+        for supplier in card["suppliers"]:
+            if supplier["inn"] == inn and supplier["email"]:
+                db.update_supplier_contacts(supplier)
+                updated += 1
+                logging.info("  %s %s | %s", inn, supplier["email"], supplier["name"][:40])
+                break
+        db.commit()
+    left = len(db.suppliers_without_email(100000))
+    logging.info("обновлено %d, осталось без почты %d", updated, left)
+
+
 def cmd_stats(args: argparse.Namespace) -> None:
     db = Database(DB_PATH)
     for k, v in db.stats().items():
@@ -144,6 +181,11 @@ def main() -> None:
     f.add_argument("--cards", action="store_true", help="also fetch contract cards (suppliers)")
     f.add_argument("--keep-raw", action="store_true", help="save raw HTML to data/raw")
     f.set_defaults(func=cmd_fetch)
+    b = sub.add_parser("backfill-contacts", help="добрать контакты у ранее собранных поставщиков")
+    b.add_argument("--limit", type=int, default=40, help="сколько поставщиков за запуск")
+    b.add_argument("--delay", type=float, default=5.0)
+    b.add_argument("--keep-raw", action="store_true")
+    b.set_defaults(func=cmd_backfill)
     s = sub.add_parser("stats")
     s.set_defaults(func=cmd_stats)
     args = parser.parse_args()
