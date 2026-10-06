@@ -112,6 +112,8 @@ def parse_contract_card(html: str) -> dict:
         "customer_name": pick("Полное наименование заказчика"),
         "customer_inn": pick("ИНН"),
         "budget_level": pick("Уровень бюджета"),
+        # У бюджетных учреждений вместо уровня бюджета указан вид внебюджетных средств.
+        "funding_source": pick("Уровень бюджета") or pick("Наименование внебюджетных средств"),
         "signed_at": _date(pick("Дата заключения контракта")),
         "contract_number": pick("Номер контракта"),
         "subject": pick("Предмет контракта"),
@@ -140,10 +142,29 @@ def _parse_suppliers(soup: BeautifulSoup) -> list[dict]:
     table = soup.select_one("div.participantsInnerHtml table")
     if table is None:
         return suppliers
+
+    # Состав колонок у карточек разный: где-то есть «Почтовый адрес» и «Статус»,
+    # где-то нет. Поэтому колонки ищем по заголовку, а не по номеру.
+    headers = [_text(th) for th in table.select("thead th")]
+
+    def col(*starts: str) -> int | None:
+        for i, head in enumerate(headers):
+            if any(head.startswith(s) for s in starts):
+                return i
+        return None
+
+    i_country = col("Страна")
+    i_address = col("Адрес места нахождения", "Адрес")
+    i_contact = col("Телефон")
+
     for tr in table.select("tbody tr"):
         cols = tr.select("td")
-        if len(cols) < 4:
+        if len(cols) < 2:
             continue
+
+        def cell(idx: int | None) -> str:
+            return _text(cols[idx]) if idx is not None and idx < len(cols) else ""
+
         first = cols[0]
         name = _text(first)
         inn = kpp = ""
@@ -157,15 +178,15 @@ def _parse_suppliers(soup: BeautifulSoup) -> list[dict]:
                     kpp = value
         # strip the "ИНН: ... КПП: ..." tail that _text picked up from nested sections
         name = re.split(r"\s+ИНН:", name)[0].strip()
-        contact = _text(cols[3])
+        contact = cell(i_contact)
         email = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", contact)
         phone = contact.replace(email.group(0), "").strip() if email else contact
         suppliers.append({
             "name": name,
             "inn": inn,
             "kpp": kpp,
-            "country": _text(cols[1]),
-            "address": _text(cols[2]),
+            "country": cell(i_country),
+            "address": cell(i_address),
             "phone": phone,
             "email": email.group(0) if email else "",
         })

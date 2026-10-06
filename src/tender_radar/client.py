@@ -7,6 +7,7 @@ throttled and retried to stay well within polite limits.
 
 from __future__ import annotations
 
+import gzip
 import logging
 import time
 from pathlib import Path
@@ -60,7 +61,9 @@ class EisClient:
                 if resp.status_code == 200 and len(resp.text) > 1000:
                     if self.raw_dir and save_as:
                         self.raw_dir.mkdir(parents=True, exist_ok=True)
-                        (self.raw_dir / save_as).write_text(resp.text, encoding="utf-8")
+                        # Сжимаем: страница ЕИС весит ~170 КБ, в gzip ~20 КБ.
+                        with gzip.open(self.raw_dir / (save_as + ".gz"), "wt", encoding="utf-8") as fh:
+                            fh.write(resp.text)
                     return resp.text
                 log.warning("GET %s -> %s (%d bytes), attempt %d", resp.url, resp.status_code, len(resp.text), attempt)
             except BlockedError:

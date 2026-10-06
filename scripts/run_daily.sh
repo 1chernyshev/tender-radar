@@ -13,5 +13,5 @@ fi
 
 cd "$ROOT/src"
 # caffeinate не дает Mac уснуть, пока идет сбор
-caffeinate -i "$ROOT/.venv/bin/python" -W ignore -m tender_radar fetch --pages 3 --days 1 --cards --delay 5 \
+caffeinate -i "$ROOT/.venv/bin/python" -W ignore -m tender_radar fetch --pages 3 --days 1 --cards --delay 5 --keep-raw \
   >> "$ROOT/logs/fetch_$(date +%Y-%m-%d).log" 2>&1

@@ -85,6 +85,20 @@ def test_every_saved_card_parses_supplier_with_inn():
     assert not without, f"карточки без ИНН поставщика: {without[:5]}"
 
 
+def test_supplier_columns_are_found_by_header():
+    """Состав колонок в таблице поставщика разный: где-то есть «Почтовый адрес»,
+    где-то нет. Разбор по номеру колонки давал адрес вместо телефона."""
+    cards = sorted(RAW.glob("card_*.html"))
+    if not cards:
+        return
+    parsed = [s for p in cards for s in parse_contract_card(_read(p))["suppliers"]]
+    assert parsed, "поставщики не разобраны"
+    without_mail = [s["name"][:30] for s in parsed if not s["email"]]
+    assert not without_mail, f"поставщики без почты: {without_mail[:3]}"
+    in_phone = [s["phone"][:40] for s in parsed if any(w in s["phone"] for w in ("УЛ", "обл.", "Д."))]
+    assert not in_phone, f"в телефон попал адрес: {in_phone[:3]}"
+
+
 if __name__ == "__main__":
     passed = failed = 0
     for name, fn in sorted(globals().items()):
