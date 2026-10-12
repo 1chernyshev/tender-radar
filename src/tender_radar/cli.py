@@ -49,6 +49,10 @@ def cmd_fetch(args: argparse.Namespace) -> None:
     except BlockedError as exc:
         logging.error("%s. Следующая попытка — при следующем запуске.", exc)
         raise SystemExit(0)
+    except RuntimeError as exc:
+        # Сайт недоступен (техработы, таймауты): данные за день доберутся позже.
+        logging.error("ЕИС недоступен: %s. Следующая попытка — при следующем запуске.", exc)
+        raise SystemExit(0)
 
 
 def _fetch(args: argparse.Namespace) -> None:
