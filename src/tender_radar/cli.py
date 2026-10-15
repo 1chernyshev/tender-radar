@@ -162,6 +162,9 @@ def _backfill(args: argparse.Namespace) -> None:
                 updated += 1
                 logging.info("  %s %s | %s", inn, supplier["email"], supplier["name"][:40])
                 break
+        else:
+            logging.info("  %s: почты в карточке нет", inn)
+        db.mark_contacts_checked(inn)
         db.commit()
     left = len(db.suppliers_without_email(100000))
     logging.info("обновлено %d, осталось без почты %d", updated, left)

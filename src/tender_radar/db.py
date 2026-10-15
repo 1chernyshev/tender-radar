@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS suppliers (
     address  TEXT,
     phone    TEXT,
     email    TEXT,
+    contacts_checked_at TIMESTAMP,
     first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -132,21 +133,41 @@ class Database:
             )
 
     def suppliers_without_email(self, limit: int) -> list[tuple[str, str, float]]:
-        """Поставщики без почты, начиная с самых крупных контрактов."""
+        """Поставщики без почты, которых еще не перепроверяли, начиная с самых крупных контрактов.
+
+        Для каждого поставщика берется его самый крупный контракт: сначала
+        считаем максимум цены по поставщику, потом находим контракт с этой ценой.
+        """
         cur = self.conn.execute(
-            """SELECT cs.inn, c.reestr_number, c.price
-                 FROM contract_suppliers cs
-                 JOIN contracts c ON c.reestr_number = cs.reestr_number
-                 JOIN suppliers s ON s.inn = cs.inn
-                WHERE s.email = ''
-                  AND c.price IS NOT NULL
-                GROUP BY cs.inn
-                HAVING c.price = MAX(c.price)
-                ORDER BY c.price DESC
+            """WITH biggest AS (
+                   SELECT cs.inn, MAX(c.price) AS max_price
+                     FROM contract_suppliers cs
+                     JOIN contracts c ON c.reestr_number = cs.reestr_number
+                     JOIN suppliers s ON s.inn = cs.inn
+                    WHERE s.email = ''
+                      AND s.contacts_checked_at IS NULL
+                      AND c.price IS NOT NULL
+                    GROUP BY cs.inn
+               )
+               SELECT b.inn,
+                      (SELECT c.reestr_number
+                         FROM contract_suppliers cs
+                         JOIN contracts c ON c.reestr_number = cs.reestr_number
+                        WHERE cs.inn = b.inn AND c.price = b.max_price
+                        LIMIT 1) AS reestr_number,
+                      b.max_price
+                 FROM biggest b
+                ORDER BY b.max_price DESC
                 LIMIT ?""",
             (limit,),
         )
-        return [(r["inn"], r["reestr_number"], r["price"]) for r in cur.fetchall()]
+        return [(r["inn"], r["reestr_number"], r["max_price"]) for r in cur.fetchall()]
+
+    def mark_contacts_checked(self, inn: str) -> None:
+        """Карточку перезапросили: больше не берем поставщика в добор, даже если почты нет."""
+        self.conn.execute(
+            "UPDATE suppliers SET contacts_checked_at = CURRENT_TIMESTAMP WHERE inn = ?", (inn,)
+        )
 
     def update_supplier_contacts(self, supplier: dict) -> None:
         self.conn.execute(
