@@ -170,6 +170,34 @@ def _backfill(args: argparse.Namespace) -> None:
     logging.info("обновлено %d, осталось без почты %d", updated, left)
 
 
+def cmd_leads(args: argparse.Namespace) -> None:
+    """Ранжированный список поставщиков по правилам приоритизации, в CSV."""
+    import csv
+    import sqlite3
+
+    from .scoring import rank
+
+    today = _parse_date(args.date) if args.date else date.today()
+    conn = sqlite3.connect(DB_PATH)
+    leads, dropped = rank(conn, today)
+    if args.fresh_days is not None:
+        leads = [l for l in leads if (today - l.signed_at).days <= args.fresh_days]
+    if args.with_contact:
+        leads = [l for l in leads if l.has_contact]
+    out = ROOT / "data" / f"leads_{today.isoformat()}.csv"
+    with out.open("w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.writer(fh, delimiter=";")
+        w.writerow(["место", "балл", "поставщик", "ИНН", "цена контракта", "подписан",
+                    "исполнение до", "контрактов в выборке", "телефон", "почта",
+                    "реестровый номер", "сумма", "срок", "свежесть", "активность"])
+        for i, l in enumerate(leads[: args.top], 1):
+            w.writerow([i, l.score, l.name, l.inn, round(l.price), l.signed_at, l.execution_until,
+                        l.contracts_in_sample, l.phone, l.email, l.reestr_number,
+                        *(round(l.parts[k], 1) for k in ("size", "duration", "freshness", "activity"))])
+    logging.info("кандидатов %d, отсеяно %s, в файл %d -> %s",
+                 len(leads), dict(dropped), min(len(leads), args.top), out)
+
+
 def cmd_stats(args: argparse.Namespace) -> None:
     db = Database(DB_PATH)
     for k, v in db.stats().items():
@@ -193,6 +221,12 @@ def main() -> None:
     b.add_argument("--delay", type=float, default=5.0)
     b.add_argument("--keep-raw", action="store_true")
     b.set_defaults(func=cmd_backfill)
+    l = sub.add_parser("leads", help="ранжированный список поставщиков в CSV")
+    l.add_argument("--top", type=int, default=100)
+    l.add_argument("--fresh-days", type=int, help="только контракты, подписанные не раньше N дней назад")
+    l.add_argument("--with-contact", action="store_true", help="только с телефоном или почтой")
+    l.add_argument("--date", help="дата расчета, ДД.ММ.ГГГГ (по умолчанию сегодня)")
+    l.set_defaults(func=cmd_leads)
     s = sub.add_parser("stats")
     s.set_defaults(func=cmd_stats)
     args = parser.parse_args()

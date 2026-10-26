@@ -11,3 +11,4 @@ logs/
 
 # служебный флаг паузы
 data/PAUSED
+data/*.csv
