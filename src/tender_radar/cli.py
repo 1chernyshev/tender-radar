@@ -170,6 +170,13 @@ def _backfill(args: argparse.Namespace) -> None:
     logging.info("обновлено %d, осталось без почты %d", updated, left)
 
 
+def _csv_safe(value):
+    """Экранирует ячейку, которую Excel может принять за формулу (CSV-инъекция)."""
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value
+
+
 def cmd_leads(args: argparse.Namespace) -> None:
     """Ранжированный список поставщиков по правилам приоритизации, в CSV."""
     import csv
@@ -191,9 +198,10 @@ def cmd_leads(args: argparse.Namespace) -> None:
                     "исполнение до", "контрактов в выборке", "телефон", "почта",
                     "реестровый номер", "сумма", "срок", "свежесть", "активность"])
         for i, l in enumerate(leads[: args.top], 1):
-            w.writerow([i, l.score, l.name, l.inn, round(l.price), l.signed_at, l.execution_until,
-                        l.contracts_in_sample, l.phone, l.email, l.reestr_number,
-                        *(round(l.parts[k], 1) for k in ("size", "duration", "freshness", "activity"))])
+            row = [i, l.score, l.name, l.inn, round(l.price), l.signed_at, l.execution_until,
+                   l.contracts_in_sample, l.phone, l.email, l.reestr_number,
+                   *(round(l.parts[k], 1) for k in ("size", "duration", "freshness", "activity"))]
+            w.writerow([_csv_safe(v) for v in row])
     logging.info("кандидатов %d, отсеяно %s, в файл %d -> %s",
                  len(leads), dict(dropped), min(len(leads), args.top), out)
 
