@@ -125,7 +125,7 @@ def score_lead(lead: Lead, today: date, weights: dict | None = None) -> Lead:
     return lead
 
 
-def load_candidates(conn: sqlite3.Connection, today: date) -> tuple[list[Lead], Counter]:
+def load_candidates(conn: sqlite3.Connection, today: date, candidate_filter=None) -> tuple[list[Lead], Counter]:
     """Кандидаты после фильтра. Второе значение — сколько отсеяно и по какой причине."""
     conn.row_factory = sqlite3.Row
     counts = Counter(
@@ -164,14 +164,16 @@ def load_candidates(conn: sqlite3.Connection, today: date) -> tuple[list[Lead], 
             execution_until=until, phone=r["phone"] or "", email=r["email"] or "",
             contracts_in_sample=n,
         )
+        if candidate_filter is not None and not candidate_filter(lead):
+            continue
         # У поставщика может быть несколько подходящих контрактов: берем самый крупный.
         if lead.inn not in best or lead.price > best[lead.inn].price:
             best[lead.inn] = lead
     return list(best.values()), dropped
 
 
-def rank(conn: sqlite3.Connection, today: date, weights: dict | None = None) -> tuple[list[Lead], Counter]:
-    leads, dropped = load_candidates(conn, today)
+def rank(conn: sqlite3.Connection, today: date, weights: dict | None = None, candidate_filter=None) -> tuple[list[Lead], Counter]:
+    leads, dropped = load_candidates(conn, today, candidate_filter)
     for lead in leads:
         score_lead(lead, today, weights)
     leads.sort(key=lambda x: x.score, reverse=True)

@@ -12,3 +12,8 @@ logs/
 # служебный флаг паузы
 data/PAUSED
 data/*.csv
+
+data/bot.lock
+
+data/*.lock
+data/snapshots/

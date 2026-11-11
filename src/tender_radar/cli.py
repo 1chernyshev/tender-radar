@@ -44,15 +44,36 @@ def _parse_date(value: str) -> date:
 
 
 def cmd_fetch(args: argparse.Namespace) -> None:
+    import sqlite3
+    Database(DB_PATH).conn.close()
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.execute("""CREATE TABLE IF NOT EXISTS fetch_runs (
+        id INTEGER PRIMARY KEY, started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        finished_at TEXT, status TEXT, new_records INTEGER, new_cards INTEGER, reason TEXT)""")
+    def counts():
+        return conn.execute('SELECT COUNT(*), COUNT(card_fetched_at) FROM contracts').fetchone()
+    before = counts()
+    run_id = conn.execute("INSERT INTO fetch_runs(status) VALUES ('running')").lastrowid
+    conn.commit()
+    status, reason = 'success', ''
     try:
         _fetch(args)
-    except BlockedError as exc:
-        logging.error("%s. Следующая попытка — при следующем запуске.", exc)
-        raise SystemExit(0)
-    except RuntimeError as exc:
-        # Сайт недоступен (техработы, таймауты): данные за день доберутся позже.
-        logging.error("ЕИС недоступен: %s. Следующая попытка — при следующем запуске.", exc)
-        raise SystemExit(0)
+    except (BlockedError, RuntimeError) as exc:
+        after = counts()
+        status = 'partial' if after != before else 'failed'
+        reason = 'blocked' if isinstance(exc, BlockedError) else 'unavailable_or_empty'
+        logging.error("Сбор %s: %s", status, exc)
+        raise SystemExit(2)
+    except Exception:
+        status, reason = 'failed', 'unexpected_error'
+        raise
+    finally:
+        after = counts()
+        conn.execute("""UPDATE fetch_runs SET finished_at=CURRENT_TIMESTAMP, status=?,
+            new_records=?, new_cards=?, reason=? WHERE id=?""",
+            (status, after[0]-before[0], after[1]-before[1], reason, run_id))
+        conn.commit()
+        conn.close()
 
 
 def _fetch(args: argparse.Namespace) -> None:
@@ -84,7 +105,7 @@ def _fetch(args: argparse.Namespace) -> None:
         logging.error("поиск за %s..%s вернул пусто", date_from, date_to)
         db.log_fetch(args.pages, 0, 0, f"{date_from}..{date_to} пусто")
         db.commit()
-        return
+        raise RuntimeError("Пустая первая выдача ЕИС после повторов")
     total, exact = parse_total_records(load_page.last_html)
     per_page = 50
     max_page = max(1, (total + per_page - 1) // per_page) if total else args.pages
@@ -104,7 +125,7 @@ def _fetch(args: argparse.Namespace) -> None:
         rows = first_rows if page == 1 else load_page(page, retry_empty=False)
         logging.info("страница %d: %d контрактов", page, len(rows))
         if not rows:
-            continue
+            raise RuntimeError("Пустая страница выбранной выдачи ЕИС")
         for row in rows:
             found += 1
             db.upsert_summary(row)
@@ -140,7 +161,10 @@ def cmd_backfill(args: argparse.Namespace) -> None:
         _backfill(args)
     except BlockedError as exc:
         logging.error("%s. Следующая попытка - при следующем запуске.", exc)
-        raise SystemExit(0)
+        raise SystemExit(2)
+    except RuntimeError as exc:
+        logging.error("ЕИС недоступен: %s. Добор контактов остановлен.", exc)
+        raise SystemExit(2)
 
 
 def _backfill(args: argparse.Namespace) -> None:
@@ -206,6 +230,24 @@ def cmd_leads(args: argparse.Namespace) -> None:
                  len(leads), dict(dropped), min(len(leads), args.top), out)
 
 
+def cmd_digest(args: argparse.Namespace) -> None:
+    """Дайджест свежих лидов в Telegram (только в личный чат из .env)."""
+    from .digest import DigestDeliveryError, run_digest
+
+    today = _parse_date(args.date) if args.date else date.today()
+    try:
+        sent = run_digest(DB_PATH, today, top=args.top, fresh_days=args.fresh_days, dry_run=args.dry_run, retry_pending=args.retry_pending)
+    except DigestDeliveryError as exc:
+        logging.error("%s", exc)
+        raise SystemExit(1)
+    logging.info("дайджест: лидов %d%s", sent, " (пробный запуск, ничего не отправлено)" if args.dry_run else "")
+
+
+def cmd_bot(args: argparse.Namespace) -> None:
+    from .bot import run_bot
+    run_bot(DB_PATH)
+
+
 def cmd_stats(args: argparse.Namespace) -> None:
     db = Database(DB_PATH)
     for k, v in db.stats().items():
@@ -235,6 +277,15 @@ def main() -> None:
     l.add_argument("--with-contact", action="store_true", help="только с телефоном или почтой")
     l.add_argument("--date", help="дата расчета, ДД.ММ.ГГГГ (по умолчанию сегодня)")
     l.set_defaults(func=cmd_leads)
+    g = sub.add_parser("digest", help="отправить дайджест лидов в Telegram")
+    g.add_argument("--top", type=int, default=7)
+    g.add_argument("--fresh-days", type=int, default=14)
+    g.add_argument("--date", help="дата расчета, ДД.ММ.ГГГГ")
+    g.add_argument("--dry-run", action="store_true", help="показать текст, не отправляя")
+    g.add_argument("--retry-pending", action="store_true", help="повторить только сохраненный недоставленный дайджест за сегодня")
+    g.set_defaults(func=cmd_digest)
+    bot = sub.add_parser("bot", help="личный Telegram-бот с командами")
+    bot.set_defaults(func=cmd_bot)
     s = sub.add_parser("stats")
     s.set_defaults(func=cmd_stats)
     args = parser.parse_args()
