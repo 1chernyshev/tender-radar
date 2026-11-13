@@ -32,7 +32,10 @@ def _date(value: str) -> date | None:
     m = re.search(r"\d{2}\.\d{2}\.\d{4}", value or "")
     if not m:
         return None
-    return datetime.strptime(m.group(0), "%d.%m.%Y").date()
+    try:
+        return datetime.strptime(m.group(0), "%d.%m.%Y").date()
+    except ValueError:
+        return None
 
 
 def parse_contract_search(html: str) -> list[dict]:
@@ -90,9 +93,12 @@ def parse_contract_card(html: str) -> dict:
     """Parse a contract card (common-info page) into a flat dict."""
     soup = BeautifulSoup(html, "lxml")
     fields: dict[str, str] = {}
+    labels: set[str] = set()
     for section in soup.select("section.section, section.blockInfo__section"):
         title = section.select_one("span.section__title")
         info = section.select_one("span.section__info")
+        if title is not None:
+            labels.add(_text(title))
         if title is not None and info is not None:
             fields.setdefault(_text(title), _text(info))
 
@@ -125,16 +131,31 @@ def parse_contract_card(html: str) -> dict:
         "advance_raw": pick("Размер аванса"),
         "delivery_place": pick("Место поставки товара"),
     }
-    # ЕИС omits the "Размер аванса" field entirely when the contract has no advance,
-    # so a missing field on an otherwise parsed card means 0 %.
-    card["advance_pct"] = _advance_pct(card["advance_raw"]) if card["advance_raw"] else (0.0 if fields else None)
+    advance_present = any(label.startswith("Размер аванса") for label in labels)
+    if advance_present:
+        card["advance_pct"] = _advance_pct(card["advance_raw"])
+        card["advance_state"] = ("explicit" if card["advance_pct"] is not None
+                                 else "empty" if not card["advance_raw"] else "unparsed")
+    else:
+        # Унаследованное допущение ЕИС сохраняем только для узнаваемой карточки.
+        # Помечаем вывод отдельно от явно указанного 0%, не выдаем за доказанный ноль.
+        complete = (len(card["reestr_number"]) == 19 and card["price"] is not None
+                    and card["signed_at"] is not None)
+        card["advance_pct"] = 0.0 if complete else None
+        card["advance_state"] = "inferred_zero" if complete else "unknown"
     card["suppliers"] = _parse_suppliers(soup)
     return card
 
 
 def _advance_pct(raw: str) -> float | None:
-    m = re.search(r"(\d+(?:[.,]\d+)?)\s*%", raw or "")
-    return float(m.group(1).replace(",", ".")) if m else None
+    # Диапазон, отрицательное число или ограничение сверху — не точный процент.
+    if re.search(r"(?:до|от)\s*\d|\d\s*[-–—]\s*\d|[-−]\s*\d", raw or "", re.I):
+        return None
+    matches = re.findall(r"(?<![\d.,])([+]?\d+(?:[.,]\d+)?)\s*%", raw or "")
+    if len(matches) != 1:
+        return None
+    value = float(matches[0].replace(",", "."))
+    return value if 0 <= value <= 100 else None
 
 
 def _parse_suppliers(soup: BeautifulSoup) -> list[dict]:

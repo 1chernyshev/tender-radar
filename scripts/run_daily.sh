@@ -18,9 +18,8 @@ daily_status=0
 if caffeinate -i "$ROOT/.venv/bin/python" -W ignore -m tender_radar fetch --pages 2 --days 1 --cards --delay 5 --keep-raw \
   >> "$DAILY_LOG" 2>&1; then
 
-# Добор контактов поставщиков, собранных до исправления разбора колонок.
-# Идет после основного сбора, начиная с самых крупных контрактов.
-  if ! caffeinate -i "$ROOT/.venv/bin/python" -W ignore -m tender_radar backfill-contacts --limit 20 --delay 10 \
+# Общий бюджет 20: до 5 известных карточек, затем добор контактов остатком.
+  if ! caffeinate -i "$ROOT/.venv/bin/python" -W ignore -m tender_radar backfill-contacts --limit 20 --refresh-limit 5 --refresh-days 7 --delay 10 --keep-raw \
     >> "$DAILY_LOG" 2>&1; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') WARNING добор не завершен; отправляю дайджест по имеющейся базе" >> "$DAILY_LOG"
     daily_status=1

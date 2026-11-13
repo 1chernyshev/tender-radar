@@ -4,15 +4,15 @@
 
 1. Фильтр: кто вообще может быть клиентом. Контракт без аванса, от 1 млн рублей,
    еще исполняется. Из поставщиков исключаются государственные и муниципальные
-   организации, публичные акционерные общества и крупные системные игроки: им
-   кредит под отдельный контракт не нужен.
+   организации, публичные акционерные общества и часто встречающиеся поставщики.
+   Это ограничения целевого сегмента, не доказательство отсутствия потребности.
 
 2. Балл от 0 до 100: насколько клиент перспективен. Складывается из четырех
    признаков, каждый с объяснимым смыслом. Веса подобраны вручную и проверены
-   на устойчивость (см. docs/scoring.md).
+   на устойчивость (см. docs/scoring-rules.md).
 
-Тип предмета контракта (товары, работы, услуги) сознательно не используется:
-проверка на данных не подтвердила, что он связан с глубиной кассового разрыва.
+Тип предмета контракта (товары, работы, услуги) не используется: меток реальной
+потребности в финансировании для обоснования его веса нет.
 """
 
 from __future__ import annotations
@@ -32,14 +32,13 @@ WEIGHTS = {
     "activity": 10,   # поставщик регулярно участвует в закупках
 }
 
-MIN_PRICE = 1_000_000          # ниже кредит под контракт банку не окупается
+MIN_PRICE = 1_000_000          # проектный порог целевого сегмента
 SIZE_CAP = 50_000_000          # выше 50 млн балл за сумму не растет
 DURATION_CAP_DAYS = 365        # выше года балл за срок не растет
 FRESH_FULL_DAYS = 3            # подписан не позже 3 дней назад: полный балл
-FRESH_ZERO_DAYS = 30           # старше 30 дней: ноль, клиент уже нашел деньги
-# Наша выборка около 1 % потока. Поставщик, попавший в нее 8 и более раз
-# за период наблюдений, в полном потоке заключает сотни контрактов: это крупный
-# игрок, а не клиент на кредит под контракт.
+FRESH_ZERO_DAYS = 30           # старше 30 дней: ноль баллов за свежесть
+# Частота в нашей неполной выборке: эвристика, не оценка размера компании.
+# Из 8 попаданий нельзя вывести число контрактов поставщика во всем реестре.
 BIG_PLAYER_MIN_CONTRACTS = 8
 ACTIVE_MIN_CONTRACTS = 2
 
@@ -90,6 +89,8 @@ def duration_part(signed: date, until: date) -> float:
 def freshness_part(signed: date, today: date) -> float:
     """Ценность лида падает со временем: поставщик ищет деньги сразу после подписания."""
     age = (today - signed).days
+    if age < 0:
+        return 0.0
     if age <= FRESH_FULL_DAYS:
         return 1.0
     return _clamp(1 - (age - FRESH_FULL_DAYS) / (FRESH_ZERO_DAYS - FRESH_FULL_DAYS))
@@ -103,12 +104,13 @@ def activity_part(contracts: int) -> float:
 # Финансовые организации тоже бывают поставщиками (банковские и страховые услуги
 # госзаказчику), но клиентами на кредит под контракт не являются.
 # «БАНК» в конце слова ловит и «АЛЬФА-БАНК», и «ГАЗПРОМБАНК», но не «БАНКЕТ».
-FINANCIAL_ORG = re.compile(r"БАНК\b|СТРАХОВ|ЛИЗИНГ")
+FINANCIAL_ORG = re.compile(r"БАНК\b|СТРАХОВ(?:О[ЕЙ]|А[ЯН]|Ы)|ЛИЗИНГ")
+PAO_PREFIX = re.compile(r'^\s*ПАО(?:\s|[«\"])')
 
 
 def is_excluded_org(name: str) -> bool:
     upper = (name or "").upper()
-    if any(marker in upper for marker in EXCLUDED_ORG_MARKERS):
+    if PAO_PREFIX.search(upper) or any(marker in upper for marker in EXCLUDED_ORG_MARKERS):
         return True
     return bool(FINANCIAL_ORG.search(upper))
 
@@ -133,23 +135,36 @@ def load_candidates(conn: sqlite3.Connection, today: date, candidate_filter=None
     )
     rows = conn.execute(
         """SELECT c.reestr_number, c.price, c.signed_at, c.execution_until,
-                  s.inn, s.name, s.phone, s.email
+                  c.status, s.inn, s.name, s.phone, s.email
              FROM contracts c
              JOIN contract_suppliers cs ON cs.reestr_number = c.reestr_number
              JOIN suppliers s ON s.inn = cs.inn
             WHERE c.advance_pct = 0
               AND c.price >= ?
-              AND c.signed_at IS NOT NULL
-              AND c.execution_until IS NOT NULL""",
+""",
         (MIN_PRICE,),
     ).fetchall()
 
     dropped = Counter()
     best: dict[str, Lead] = {}
     for r in rows:
-        until = date.fromisoformat(r["execution_until"])
+        if (r['status'] or '').strip().casefold() in ('исполнение завершено', 'исполнение прекращено'):
+            dropped['завершенный или прекращенный контракт'] += 1
+            continue
+        try:
+            signed = date.fromisoformat(r["signed_at"] or "")
+            until = date.fromisoformat(r["execution_until"] or "")
+        except (ValueError, TypeError):
+            dropped["неизвестная или неверная дата"] += 1
+            continue
+        if until < signed:
+            dropped["окончание раньше подписания"] += 1
+            continue
+        if signed > today:
+            dropped["дата подписания в будущем"] += 1
+            continue
         if until < today:
-            dropped["контракт уже исполнен"] += 1
+            dropped["срок исполнения истек"] += 1
             continue
         if is_excluded_org(r["name"]):
             dropped["гос./муниц. организация, ПАО, банк или страховая"] += 1
@@ -160,7 +175,7 @@ def load_candidates(conn: sqlite3.Connection, today: date, candidate_filter=None
             continue
         lead = Lead(
             inn=r["inn"], name=r["name"], reestr_number=r["reestr_number"],
-            price=r["price"], signed_at=date.fromisoformat(r["signed_at"]),
+            price=r["price"], signed_at=signed,
             execution_until=until, phone=r["phone"] or "", email=r["email"] or "",
             contracts_in_sample=n,
         )

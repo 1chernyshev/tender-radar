@@ -44,36 +44,17 @@ def _parse_date(value: str) -> date:
 
 
 def cmd_fetch(args: argparse.Namespace) -> None:
-    import sqlite3
+    from .fetch_status import FetchAlreadyRunning, track_fetch
     Database(DB_PATH).conn.close()
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute("""CREATE TABLE IF NOT EXISTS fetch_runs (
-        id INTEGER PRIMARY KEY, started_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        finished_at TEXT, status TEXT, new_records INTEGER, new_cards INTEGER, reason TEXT)""")
-    def counts():
-        return conn.execute('SELECT COUNT(*), COUNT(card_fetched_at) FROM contracts').fetchone()
-    before = counts()
-    run_id = conn.execute("INSERT INTO fetch_runs(status) VALUES ('running')").lastrowid
-    conn.commit()
-    status, reason = 'success', ''
     try:
-        _fetch(args)
+        with track_fetch(DB_PATH):
+            _fetch(args)
+    except FetchAlreadyRunning as exc:
+        logging.error("%s", exc)
+        raise SystemExit(3)
     except (BlockedError, RuntimeError) as exc:
-        after = counts()
-        status = 'partial' if after != before else 'failed'
-        reason = 'blocked' if isinstance(exc, BlockedError) else 'unavailable_or_empty'
-        logging.error("Сбор %s: %s", status, exc)
+        logging.error("Сбор не завершен: %s", exc)
         raise SystemExit(2)
-    except Exception:
-        status, reason = 'failed', 'unexpected_error'
-        raise
-    finally:
-        after = counts()
-        conn.execute("""UPDATE fetch_runs SET finished_at=CURRENT_TIMESTAMP, status=?,
-            new_records=?, new_cards=?, reason=? WHERE id=?""",
-            (status, after[0]-before[0], after[1]-before[1], reason, run_id))
-        conn.commit()
-        conn.close()
 
 
 def _fetch(args: argparse.Namespace) -> None:
@@ -135,8 +116,8 @@ def _fetch(args: argparse.Namespace) -> None:
                     save_as=f"card_{row['reestr_number']}.html",
                 )
                 card = parse_contract_card(card_html)
-                if card["reestr_number"] != row["reestr_number"]:
-                    card["reestr_number"] = row["reestr_number"]
+                from .maintenance import validate_card
+                validate_card(card, row["reestr_number"])
                 db.save_card(card)
                 new_cards += 1
                 logging.info("  card %s: %s | %s | %.2f | advance %s",
@@ -168,30 +149,15 @@ def cmd_backfill(args: argparse.Namespace) -> None:
 
 
 def _backfill(args: argparse.Namespace) -> None:
+    from .maintenance import maintain_cards
     client = EisClient(delay=args.delay, raw_dir=RAW_DIR if args.keep_raw else None)
     db = Database(DB_PATH)
-    rows = db.suppliers_without_email(args.limit)
-    if not rows:
-        logging.info("поставщиков без почты не осталось")
-        return
-    logging.info("добираю контакты: %d поставщиков", len(rows))
-    updated = 0
-    for inn, reestr_number, price in rows:
-        html = client.get(CARD_PATH, {"reestrNumber": reestr_number},
-                          save_as=f"card_{reestr_number}.html")
-        card = parse_contract_card(html)
-        for supplier in card["suppliers"]:
-            if supplier["inn"] == inn and supplier["email"]:
-                db.update_supplier_contacts(supplier)
-                updated += 1
-                logging.info("  %s %s | %s", inn, supplier["email"], supplier["name"][:40])
-                break
-        else:
-            logging.info("  %s: почты в карточке нет", inn)
-        db.mark_contacts_checked(inn)
-        db.commit()
-    left = len(db.suppliers_without_email(100000))
-    logging.info("обновлено %d, осталось без почты %d", updated, left)
+    try:
+        maintain_cards(db, client, args.limit, getattr(args, 'refresh_limit', 0),
+                       getattr(args, 'refresh_days', 7))
+    finally:
+        db.conn.close()
+        client.session.close()
 
 
 def _csv_safe(value):
@@ -210,11 +176,11 @@ def cmd_leads(args: argparse.Namespace) -> None:
 
     today = _parse_date(args.date) if args.date else date.today()
     conn = sqlite3.connect(DB_PATH)
-    leads, dropped = rank(conn, today)
-    if args.fresh_days is not None:
-        leads = [l for l in leads if (today - l.signed_at).days <= args.fresh_days]
-    if args.with_contact:
-        leads = [l for l in leads if l.has_contact]
+    def eligible(lead):
+        return ((args.fresh_days is None or 0 <= (today - lead.signed_at).days <= args.fresh_days)
+                and (not args.with_contact or lead.has_contact))
+    leads, dropped = rank(conn, today, candidate_filter=eligible)
+    conn.close()
     out = ROOT / "data" / f"leads_{today.isoformat()}.csv"
     with out.open("w", newline="", encoding="utf-8-sig") as fh:
         w = csv.writer(fh, delimiter=";")
@@ -267,7 +233,9 @@ def main() -> None:
     f.add_argument("--keep-raw", action="store_true", help="save raw HTML to data/raw")
     f.set_defaults(func=cmd_fetch)
     b = sub.add_parser("backfill-contacts", help="добрать контакты у ранее собранных поставщиков")
-    b.add_argument("--limit", type=int, default=40, help="сколько поставщиков за запуск")
+    b.add_argument("--limit", type=int, choices=range(0, 21), default=20, help="общий лимит загрузок карточек, максимум 20")
+    b.add_argument("--refresh-limit", type=int, default=0, help="часть общего лимита на обновление известных карточек")
+    b.add_argument("--refresh-days", type=int, default=7, help="возраст карточки для обновления, дней")
     b.add_argument("--delay", type=float, default=5.0)
     b.add_argument("--keep-raw", action="store_true")
     b.set_defaults(func=cmd_backfill)

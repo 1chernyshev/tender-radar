@@ -1,8 +1,7 @@
 """HTTP client for zakupki.gov.ru (ЕИС) public HTML pages.
 
-The site serves plain HTTPS with a Russian root CA that is not in the macOS
-trust store, so certificate verification is disabled on purpose. Requests are
-throttled and retried to stay well within polite limits.
+Certificate and hostname verification use the bundled official Russian root CA
+for this client only. Requests are throttled and retried within polite limits.
 """
 
 from __future__ import annotations
@@ -13,13 +12,11 @@ import time
 from pathlib import Path
 
 import requests
-import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 log = logging.getLogger(__name__)
 
 BASE_URL = "https://zakupki.gov.ru"
+CA_BUNDLE = Path(__file__).resolve().parent / "certs" / "russian_trusted_root_ca.pem"
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0 Safari/537.36"
@@ -35,7 +32,8 @@ class BlockedError(RuntimeError):
 
 
 class EisClient:
-    def __init__(self, delay: float = 2.0, retries: int = 3, raw_dir: Path | None = None):
+    def __init__(self, delay: float = 2.0, retries: int = 3, raw_dir: Path | None = None,
+                 ca_bundle: Path | None = None):
         self.delay = delay
         self.retries = retries
         self.raw_dir = raw_dir
@@ -46,14 +44,15 @@ class EisClient:
             "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8",
             "Accept": "text/html,application/xhtml+xml",
         })
-        self.session.verify = False
+        self.ca_bundle = str(ca_bundle or CA_BUNDLE)
+        self.session.verify = self.ca_bundle
 
     def get(self, path: str, params: dict | None = None, save_as: str | None = None) -> str:
         url = path if path.startswith("http") else BASE_URL + path
         for attempt in range(1, self.retries + 1):
             self._throttle()
             try:
-                resp = self.session.get(url, params=params, timeout=60)
+                resp = self.session.get(url, params=params, timeout=60, verify=self.ca_bundle)
                 if resp.status_code == 403 or "подозрительная активность" in resp.text:
                     raise BlockedError(
                         "ЕИС заблокировал IP за автоматический сбор; сбор остановлен"
@@ -68,6 +67,9 @@ class EisClient:
                 log.warning("GET %s -> %s (%d bytes), attempt %d", resp.url, resp.status_code, len(resp.text), attempt)
             except BlockedError:
                 raise
+            except requests.exceptions.SSLError as exc:
+                # Повторы и отключение проверки не исправляют недоверенную цепочку.
+                raise RuntimeError("ЕИС: ошибка проверки TLS; проверьте сертификат и Python/OpenSSL") from exc
             except requests.RequestException as exc:
                 log.warning("GET %s failed: %s, attempt %d", url, exc, attempt)
             time.sleep(self.delay * attempt * 2)

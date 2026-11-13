@@ -1,4 +1,5 @@
-.venv/
+.venv
+.venv-openssl/
 __pycache__/
 *.pyc
 data/*.db
@@ -17,3 +18,5 @@ data/bot.lock
 
 data/*.lock
 data/snapshots/
+
+work/

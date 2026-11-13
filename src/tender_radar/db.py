@@ -4,7 +4,7 @@ the schema mirrors what the ЕИС pages expose and is the source for analytics.
 from __future__ import annotations
 
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 SCHEMA = """
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS contracts (
     security_amount    REAL,
     advance_pct        REAL,
     advance_raw        TEXT,
+    advance_state      TEXT,
     signed_at          DATE,
     execution_from     DATE,
     execution_until    DATE,
@@ -76,6 +77,10 @@ class Database:
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        columns = {r[1] for r in self.conn.execute("PRAGMA table_info(contracts)")}
+        if "advance_state" not in columns:
+            self.conn.execute("ALTER TABLE contracts ADD COLUMN advance_state TEXT")
+            self.conn.commit()
 
     def upsert_summary(self, row: dict) -> bool:
         """Insert a search-result row; returns True if the contract is new."""
@@ -102,8 +107,21 @@ class Database:
         return r is None or r["card_fetched_at"] is None
 
     def save_card(self, card: dict) -> None:
+        # Замена карточки и ее связей атомарна, включая повторный разбор.
+        self.conn.execute("SAVEPOINT save_card")
+        try:
+            self._save_card(card)
+        except BaseException:
+            self.conn.execute("ROLLBACK TO save_card")
+            self.conn.execute("RELEASE save_card")
+            raise
+        else:
+            self.conn.execute("RELEASE save_card")
+
+    def _save_card(self, card: dict) -> None:
         payload = {k: _iso(v) for k, v in card.items() if k != "suppliers"}
-        self.conn.execute(
+        payload.setdefault("advance_state", "legacy_unknown")
+        updated = self.conn.execute(
             """UPDATE contracts SET
                    status = :status, ikz = :ikz, procurement_method = :procurement_method,
                    single_supplier_basis = :single_supplier_basis, bank_support = :bank_support,
@@ -111,12 +129,17 @@ class Database:
                    budget_level = :budget_level, funding_source = :funding_source, contract_number = :contract_number,
                    subject = :subject, price = :price, price_is_max = :price_is_max,
                    security_amount = :security_amount, advance_pct = :advance_pct,
-                   advance_raw = :advance_raw, signed_at = :signed_at,
+                   advance_raw = :advance_raw, advance_state = :advance_state,
+                   signed_at = :signed_at,
                    execution_from = :execution_from, execution_until = :execution_until,
                    delivery_place = :delivery_place, card_fetched_at = CURRENT_TIMESTAMP
                WHERE reestr_number = :reestr_number""",
             payload,
         )
+        if updated.rowcount != 1:
+            raise ValueError("Карточка отсутствует в реестре локальной базы")
+        self.conn.execute("DELETE FROM contract_suppliers WHERE reestr_number = ?",
+                          (card["reestr_number"],))
         for s in card["suppliers"]:
             if not s["inn"]:
                 continue
@@ -124,6 +147,7 @@ class Database:
                 """INSERT INTO suppliers (inn, kpp, name, country, address, phone, email)
                    VALUES (:inn, :kpp, :name, :country, :address, :phone, :email)
                    ON CONFLICT(inn) DO UPDATE SET name = excluded.name,
+                       kpp = excluded.kpp, country = excluded.country,
                        address = excluded.address, phone = excluded.phone, email = excluded.email""",
                 s,
             )
@@ -131,6 +155,26 @@ class Database:
                 "INSERT OR IGNORE INTO contract_suppliers (reestr_number, inn) VALUES (?, ?)",
                 (card["reestr_number"], s["inn"]),
             )
+
+    def stale_cards(self, limit: int, stale_days: int, today: date) -> list[str]:
+        """Свежие потенциальные лиды: измененная выдача или старая карточка.
+
+        Не обещает обновления всей базы: бюджет ограничен, старейшие идут первыми.
+        """
+        cutoff = today - timedelta(days=stale_days)
+        fresh = today - timedelta(days=14)
+        rows = self.conn.execute(
+            """SELECT reestr_number FROM contracts
+               WHERE card_fetched_at IS NOT NULL AND price >= 1000000
+                 AND advance_pct = 0 AND signed_at BETWEEN ? AND ?
+                 AND execution_until >= ?
+                 AND COALESCE(status,'') NOT IN ('Исполнение завершено','Исполнение прекращено')
+                 AND (date(card_fetched_at) <= ? OR date(updated_at) > date(card_fetched_at))
+               ORDER BY (date(updated_at) > date(card_fetched_at)) DESC,
+                        card_fetched_at, reestr_number LIMIT ?""",
+            (fresh.isoformat(), today.isoformat(), today.isoformat(), cutoff.isoformat(), limit),
+        )
+        return [r[0] for r in rows]
 
     def suppliers_without_email(self, limit: int) -> list[tuple[str, str, float]]:
         """Поставщики без почты, которых еще не перепроверяли, начиная с самых крупных контрактов.

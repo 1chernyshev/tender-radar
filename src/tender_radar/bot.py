@@ -68,7 +68,7 @@ def data_note(conn, today):
     except sqlite3.OperationalError:
         run = None
     if run:
-        labels = {'running': 'выполняется', 'success': 'завершен', 'partial': 'частичный', 'failed': 'ошибка'}
+        labels = {'running': 'выполняется', 'success': 'завершен', 'partial': 'частичный', 'failed': 'ошибка', 'interrupted': 'прерван (выявлено при следующем запуске)'}
         note += f' Последний запуск сбора: {labels.get(run[0], run[0])} ({run[1]} UTC).'
     return note
 
@@ -175,6 +175,25 @@ def poll_once(api, env, db_path, state):
         state.put('offset', update['update_id'] + 1)
 
 
+def poll_forever(api, env, db_path, state):
+    delay, failures, outage_since = 2, 0, None
+    while True:
+        try:
+            poll_once(api, env, db_path, state)
+        except TelegramError as exc:
+            if outage_since is None:
+                outage_since = time.monotonic()
+            failures += 1
+            log.warning('Telegram: %s; сбой подряд %d; повтор через %d с', exc, failures, delay)
+            time.sleep(delay)
+            delay = min(delay * 2, 30)
+        else:
+            if failures:
+                log.info('Telegram: опрос восстановлен после %d сбоев, %.0f с с первой ошибки',
+                         failures, time.monotonic() - outage_since)
+            delay, failures, outage_since = 2, 0, None
+
+
 def run_bot(db_path, state_path=None):
     env = load_env()
     if not env.get('TELEGRAM_TOKEN') or not env.get('TELEGRAM_CHAT_ID', '').isdigit():
@@ -195,14 +214,6 @@ def run_bot(db_path, state_path=None):
             api.call('setMyCommands', {'commands': json.dumps(COMMANDS, ensure_ascii=False),
                      'scope': json.dumps({'type': 'chat', 'chat_id': int(env['TELEGRAM_CHAT_ID'])})})
             log.info('обработчик @%s запущен; доступ только владельцу', username)
-            delay = 2
-            while True:
-                try:
-                    poll_once(api, env, db_path, state)
-                    delay = 2
-                except TelegramError as exc:
-                    log.warning('Telegram: %s; повтор через %d с', exc, delay)
-                    time.sleep(delay)
-                    delay = min(delay * 2, 30)
+            poll_forever(api, env, db_path, state)
         finally:
             state.close()
