@@ -7,7 +7,8 @@ Russian Trusted Root CA (RSA). Загружен 13.11.2026 по HTTPS с про�
 - Файл: https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt
 - Инструкция интеграции с этим источником: https://developers.tochka.com/docs/tochka-api/certificate
 - SHA-256 DER (отпечаток сертификата): `D26D2D0231B7C39F92CC738512BA54103519E4405D68B5BD703E9788CA8ECF31`
-- SHA-256 файла PEM: `936a43fea6e8e525bcc0f81acd9c3d21b4fc4b9b68acea7906d698005afc6504`
+- SHA-256 файла PEM: `0819977502d9aed2234830f6ffb91f82f401d3674c6e51dd19e16d8b3dbf0eb4`
+- Переводы строк PEM нормализованы в LF; содержимое сертификата DER не менялось.
 - Срок действия: 01.03.2022 21:04:15 — 27.02.2032 21:04:15 UTC.
 
 Только `EisClient` использует этот файл как набор доверенных корней. Проверяются

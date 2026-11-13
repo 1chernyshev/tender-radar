@@ -1,5 +1,6 @@
 """Восстановление опроса и сохраненной очереди на уровне HTTP-транспорта."""
 import io
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import sys
@@ -43,6 +44,14 @@ class RecoveryTests(unittest.TestCase):
                 bot.poll_once(api, {}, None, state)
                 self.assertEqual(state.get('offset'), 42)
 
+    def test_recovery_elapsed_time_includes_sleep_between_polls(self):
+        with patch.object(bot, 'poll_once', side_effect=[bot.TelegramError('timeout'), None, KeyboardInterrupt]), \
+                patch.object(bot.time, 'time', side_effect=[1000, 4600]), \
+                patch.object(bot.time, 'sleep'), patch.object(bot.log, 'info') as info:
+            with self.assertRaises(KeyboardInterrupt):
+                bot.poll_forever(None, {}, None, None)
+        self.assertEqual(info.call_args.args[1:], (1, 3600))
+
     def test_queue_resumes_after_transport_failure_and_process_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'test.db'
@@ -59,7 +68,7 @@ class RecoveryTests(unittest.TestCase):
                 with self.assertRaises(digest.DigestDeliveryError):
                     digest.run_digest(path, day, env=env)
             self.assertNotIn('secret-token', '\n'.join(logs.output))
-            with sqlite3.connect(path) as conn:
+            with closing(sqlite3.connect(path)) as conn:
                 self.assertEqual(conn.execute('SELECT next_message,completed_at FROM digest_outbox').fetchone(), (1, None))
             # Повторный вызов открывает базу заново, без состояния прошлого процесса.
             with patch.object(digest.urllib.request, 'urlopen', return_value=io.BytesIO(b'{"ok":true}')) as send:
@@ -67,7 +76,7 @@ class RecoveryTests(unittest.TestCase):
                 digest.run_digest(path, day, env=env, retry_pending=True)
             self.assertEqual(send.call_count, 1)
             self.assertIn(b'text=second', send.call_args.kwargs['data'])
-            with sqlite3.connect(path) as conn:
+            with closing(sqlite3.connect(path)) as conn:
                 position, completed = conn.execute('SELECT next_message,completed_at FROM digest_outbox').fetchone()
             self.assertEqual(position, 2)
             self.assertIsNotNone(completed)

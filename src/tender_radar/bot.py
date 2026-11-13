@@ -182,7 +182,8 @@ def poll_forever(api, env, db_path, state):
             poll_once(api, env, db_path, state)
         except TelegramError as exc:
             if outage_since is None:
-                outage_since = time.monotonic()
+                # Время по часам включает сон Mac, в отличие от monotonic на macOS.
+                outage_since = time.time()
             failures += 1
             log.warning('Telegram: %s; сбой подряд %d; повтор через %d с', exc, failures, delay)
             time.sleep(delay)
@@ -190,7 +191,7 @@ def poll_forever(api, env, db_path, state):
         else:
             if failures:
                 log.info('Telegram: опрос восстановлен после %d сбоев, %.0f с с первой ошибки',
-                         failures, time.monotonic() - outage_since)
+                         failures, max(0, time.time() - outage_since))
             delay, failures, outage_since = 2, 0, None
 
 
