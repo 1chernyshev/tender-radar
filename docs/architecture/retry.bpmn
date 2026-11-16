@@ -1,0 +1,139 @@
+<?xml version='1.0' encoding='utf-8'?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_retry" targetNamespace="https://tender-radar.local/model">
+  <bpmn:error id="StageError" name="Ненулевой результат стадии" errorCode="stage_failure"/>
+  <bpmn:process id="Process_retry" name="Повтор очереди — отдельный запуск" isExecutable="false">
+    <bpmn:documentation>Задачи отправки и сохранения свернуты: цикл по оставшимся частям внутри. Повтор не создает новый дайджест.</bpmn:documentation>
+    <bpmn:startEvent id="Start" name="Каждые 30 мин 09:15–21:45 Саратов">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+      <bpmn:timerEventDefinition>
+        <bpmn:timeCycle>R/PT30M</bpmn:timeCycle>
+      </bpmn:timerEventDefinition>
+    </bpmn:startEvent>
+    <bpmn:task id="Read" name="Прочитать очередь текущего дня">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="Has" name="Есть незавершенная?">
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+      <bpmn:outgoing>f4</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="Nothing" name="Ничего не создавать">
+      <bpmn:incoming>f3</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:task id="Send" name="Отправить часть с next_message">
+      <bpmn:incoming>f4</bpmn:incoming>
+      <bpmn:outgoing>f5</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="Ack" name="API подтвердил?">
+      <bpmn:incoming>f5</bpmn:incoming>
+      <bpmn:outgoing>f6</bpmn:outgoing>
+      <bpmn:outgoing>f7</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="Wait" name="Оставить для следующего запуска">
+      <bpmn:incoming>f6</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:task id="Position" name="Сохранить позицию и завершить очередь">
+      <bpmn:incoming>f7</bpmn:incoming>
+      <bpmn:outgoing>f8</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:endEvent id="End" name="Готово">
+      <bpmn:incoming>f8</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="Start" targetRef="Read" name=""/>
+    <bpmn:sequenceFlow id="f2" sourceRef="Read" targetRef="Has" name=""/>
+    <bpmn:sequenceFlow id="f3" sourceRef="Has" targetRef="Nothing" name="нет"/>
+    <bpmn:sequenceFlow id="f4" sourceRef="Has" targetRef="Send" name="да"/>
+    <bpmn:sequenceFlow id="f5" sourceRef="Send" targetRef="Ack" name=""/>
+    <bpmn:sequenceFlow id="f6" sourceRef="Ack" targetRef="Wait" name="нет"/>
+    <bpmn:sequenceFlow id="f7" sourceRef="Ack" targetRef="Position" name="да"/>
+    <bpmn:sequenceFlow id="f8" sourceRef="Position" targetRef="End" name=""/>
+  </bpmn:process>
+  <bpmn:collaboration id="Collaboration_retry">
+    <bpmn:participant id="MainPool" name="Tender Radar" processRef="Process_retry"/>
+    <bpmn:participant id="TG" name="Telegram API"/>
+    <bpmn:messageFlow id="m1" sourceRef="Send" targetRef="TG" name="sendMessage"/>
+    <bpmn:messageFlow id="m2" sourceRef="TG" targetRef="Send" name="ответ"/>
+  </bpmn:collaboration>
+  <bpmndi:BPMNDiagram id="Diagram_retry">
+    <bpmndi:BPMNPlane id="Plane_retry" bpmnElement="Collaboration_retry">
+      <bpmndi:BPMNShape id="Shape_MainPool" bpmnElement="MainPool" isHorizontal="true">
+        <dc:Bounds x="20" y="125" width="1460" height="410"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_TG" bpmnElement="TG" isHorizontal="true">
+        <dc:Bounds x="720" y="15" width="620" height="70"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Start" bpmnElement="Start">
+        <dc:Bounds x="65" y="240" width="42" height="42"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Read" bpmnElement="Read">
+        <dc:Bounds x="165" y="220" width="180" height="85"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Has" bpmnElement="Has">
+        <dc:Bounds x="410" y="238" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Nothing" bpmnElement="Nothing">
+        <dc:Bounds x="414" y="425" width="42" height="42"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Send" bpmnElement="Send">
+        <dc:Bounds x="555" y="220" width="200" height="85"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Ack" bpmnElement="Ack">
+        <dc:Bounds x="830" y="238" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Wait" bpmnElement="Wait">
+        <dc:Bounds x="834" y="425" width="42" height="42"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Position" bpmnElement="Position">
+        <dc:Bounds x="985" y="220" width="235" height="85"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_End" bpmnElement="End">
+        <dc:Bounds x="1340" y="240" width="42" height="42"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_f1" bpmnElement="f1">
+        <di:waypoint x="107" y="261"/>
+        <di:waypoint x="165" y="261"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f2" bpmnElement="f2">
+        <di:waypoint x="345" y="263"/>
+        <di:waypoint x="410" y="263"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f3" bpmnElement="f3">
+        <di:waypoint x="435" y="288"/>
+        <di:waypoint x="435" y="425"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f4" bpmnElement="f4">
+        <di:waypoint x="460" y="263"/>
+        <di:waypoint x="555" y="263"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f5" bpmnElement="f5">
+        <di:waypoint x="755" y="263"/>
+        <di:waypoint x="830" y="263"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f6" bpmnElement="f6">
+        <di:waypoint x="855" y="288"/>
+        <di:waypoint x="855" y="425"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f7" bpmnElement="f7">
+        <di:waypoint x="880" y="263"/>
+        <di:waypoint x="985" y="263"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f8" bpmnElement="f8">
+        <di:waypoint x="1220" y="263"/>
+        <di:waypoint x="1340" y="263"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_m1" bpmnElement="m1">
+        <di:waypoint x="620" y="220"/>
+        <di:waypoint x="620" y="110"/>
+        <di:waypoint x="800" y="110"/>
+        <di:waypoint x="800" y="85"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_m2" bpmnElement="m2">
+        <di:waypoint x="900" y="85"/>
+        <di:waypoint x="900" y="150"/>
+        <di:waypoint x="700" y="150"/>
+        <di:waypoint x="700" y="220"/>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

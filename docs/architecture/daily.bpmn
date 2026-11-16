@@ -1,0 +1,217 @@
+<?xml version='1.0' encoding='utf-8'?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_daily" targetNamespace="https://tender-radar.local/model">
+  <bpmn:error id="StageError" name="Ненулевой результат стадии" errorCode="stage_failure"/>
+  <bpmn:process id="Process_daily" name="Ежедневный запуск — AS IS" isExecutable="false">
+    <bpmn:documentation>Модель запуска run_daily.sh. Внутренние циклы сбора свернуты. BPMN-движок не используется.</bpmn:documentation>
+    <bpmn:startEvent id="Start" name="09:15 Саратов">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+      <bpmn:timerEventDefinition>
+        <bpmn:timeCycle>R/2026-11-16T09:15:00+04:00/P1D</bpmn:timeCycle>
+      </bpmn:timerEventDefinition>
+    </bpmn:startEvent>
+    <bpmn:exclusiveGateway id="Pause" name="Пауза?">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="Paused" name="На паузе">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:subProcess id="Fetch" name="Собрать контракты">
+      <bpmn:incoming>f3</bpmn:incoming>
+      <bpmn:outgoing>f4</bpmn:outgoing>
+    </bpmn:subProcess>
+    <bpmn:boundaryEvent id="FetchError" name="Отказ / ошибка" attachedToRef="Fetch" cancelActivity="true">
+      <bpmn:outgoing>f5</bpmn:outgoing>
+      <bpmn:errorEventDefinition errorRef="StageError"/>
+    </bpmn:boundaryEvent>
+    <bpmn:exclusiveGateway id="FetchOK" name="fetch успешен?">
+      <bpmn:incoming>f4</bpmn:incoming>
+      <bpmn:outgoing>f6</bpmn:outgoing>
+      <bpmn:outgoing>f7</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:subProcess id="Maintenance" name="Обновить карточки и контакты ≤20">
+      <bpmn:incoming>f7</bpmn:incoming>
+      <bpmn:outgoing>f8</bpmn:outgoing>
+    </bpmn:subProcess>
+    <bpmn:boundaryEvent id="MaintError" name="Ошибка" attachedToRef="Maintenance" cancelActivity="true">
+      <bpmn:outgoing>f9</bpmn:outgoing>
+      <bpmn:errorEventDefinition errorRef="StageError"/>
+    </bpmn:boundaryEvent>
+    <bpmn:task id="Skip" name="Добор пропустить">
+      <bpmn:incoming>f5</bpmn:incoming>
+      <bpmn:incoming>f6</bpmn:incoming>
+      <bpmn:outgoing>f10</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:exclusiveGateway id="Merge" name="">
+      <bpmn:incoming>f8</bpmn:incoming>
+      <bpmn:incoming>f9</bpmn:incoming>
+      <bpmn:incoming>f10</bpmn:incoming>
+      <bpmn:outgoing>f11</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:subProcess id="Digest" name="Сохранить и отправить дайджест">
+      <bpmn:incoming>f11</bpmn:incoming>
+      <bpmn:outgoing>f12</bpmn:outgoing>
+    </bpmn:subProcess>
+    <bpmn:boundaryEvent id="DigestError" name="Не доставлен" attachedToRef="Digest" cancelActivity="true">
+      <bpmn:outgoing>f13</bpmn:outgoing>
+      <bpmn:errorEventDefinition errorRef="StageError"/>
+    </bpmn:boundaryEvent>
+    <bpmn:endEvent id="Pending" name="Очередь сохранена; повтор отдельно">
+      <bpmn:incoming>f13</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End" name="Результат доставлен">
+      <bpmn:incoming>f12</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="Start" targetRef="Pause" name=""/>
+    <bpmn:sequenceFlow id="f2" sourceRef="Pause" targetRef="Paused" name="да"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="Pause" targetRef="Fetch" name="нет"/>
+    <bpmn:sequenceFlow id="f4" sourceRef="Fetch" targetRef="FetchOK" name=""/>
+    <bpmn:sequenceFlow id="f5" sourceRef="FetchError" targetRef="Skip" name=""/>
+    <bpmn:sequenceFlow id="f6" sourceRef="FetchOK" targetRef="Skip" name="нет"/>
+    <bpmn:sequenceFlow id="f7" sourceRef="FetchOK" targetRef="Maintenance" name="да"/>
+    <bpmn:sequenceFlow id="f8" sourceRef="Maintenance" targetRef="Merge" name=""/>
+    <bpmn:sequenceFlow id="f9" sourceRef="MaintError" targetRef="Merge" name=""/>
+    <bpmn:sequenceFlow id="f10" sourceRef="Skip" targetRef="Merge" name=""/>
+    <bpmn:sequenceFlow id="f11" sourceRef="Merge" targetRef="Digest" name=""/>
+    <bpmn:sequenceFlow id="f12" sourceRef="Digest" targetRef="End" name=""/>
+    <bpmn:sequenceFlow id="f13" sourceRef="DigestError" targetRef="Pending" name=""/>
+  </bpmn:process>
+  <bpmn:collaboration id="Collaboration_daily">
+    <bpmn:participant id="MainPool" name="Tender Radar" processRef="Process_daily"/>
+    <bpmn:participant id="EIS" name="ЕИС"/>
+    <bpmn:participant id="TG" name="Telegram API"/>
+    <bpmn:messageFlow id="m1" sourceRef="Fetch" targetRef="EIS" name="HTTPS"/>
+    <bpmn:messageFlow id="m2" sourceRef="EIS" targetRef="Fetch" name="HTML"/>
+    <bpmn:messageFlow id="m3" sourceRef="Digest" targetRef="TG" name="sendMessage"/>
+    <bpmn:messageFlow id="m4" sourceRef="TG" targetRef="Digest" name="ответ API"/>
+  </bpmn:collaboration>
+  <bpmndi:BPMNDiagram id="Diagram_daily">
+    <bpmndi:BPMNPlane id="Plane_daily" bpmnElement="Collaboration_daily">
+      <bpmndi:BPMNShape id="Shape_MainPool" bpmnElement="MainPool" isHorizontal="true">
+        <dc:Bounds x="20" y="135" width="1500" height="560"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_EIS" bpmnElement="EIS" isHorizontal="true">
+        <dc:Bounds x="20" y="15" width="680" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_TG" bpmnElement="TG" isHorizontal="true">
+        <dc:Bounds x="850" y="15" width="670" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Start" bpmnElement="Start">
+        <dc:Bounds x="65" y="220" width="42" height="42"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Pause" bpmnElement="Pause">
+        <dc:Bounds x="155" y="216" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Paused" bpmnElement="Paused">
+        <dc:Bounds x="159" y="490" width="42" height="42"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Fetch" bpmnElement="Fetch" isExpanded="false">
+        <dc:Bounds x="265" y="200" width="185" height="90"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_FetchError" bpmnElement="FetchError">
+        <dc:Bounds x="400" y="270" width="38" height="38"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_FetchOK" bpmnElement="FetchOK">
+        <dc:Bounds x="510" y="220" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Maintenance" bpmnElement="Maintenance" isExpanded="false">
+        <dc:Bounds x="635" y="200" width="210" height="90"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_MaintError" bpmnElement="MaintError">
+        <dc:Bounds x="795" y="270" width="38" height="38"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Skip" bpmnElement="Skip">
+        <dc:Bounds x="490" y="440" width="180" height="80"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Merge" bpmnElement="Merge">
+        <dc:Bounds x="910" y="220" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Digest" bpmnElement="Digest" isExpanded="false">
+        <dc:Bounds x="1030" y="200" width="240" height="90"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_DigestError" bpmnElement="DigestError">
+        <dc:Bounds x="1220" y="270" width="38" height="38"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Pending" bpmnElement="Pending">
+        <dc:Bounds x="1370" y="490" width="42" height="42"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_End" bpmnElement="End">
+        <dc:Bounds x="1395" y="220" width="42" height="42"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_f1" bpmnElement="f1">
+        <di:waypoint x="107" y="241"/>
+        <di:waypoint x="155" y="241"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f2" bpmnElement="f2">
+        <di:waypoint x="180" y="266"/>
+        <di:waypoint x="180" y="490"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f3" bpmnElement="f3">
+        <di:waypoint x="205" y="241"/>
+        <di:waypoint x="265" y="241"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f4" bpmnElement="f4">
+        <di:waypoint x="450" y="245"/>
+        <di:waypoint x="510" y="245"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f5" bpmnElement="f5">
+        <di:waypoint x="419" y="308"/>
+        <di:waypoint x="419" y="480"/>
+        <di:waypoint x="490" y="480"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f6" bpmnElement="f6">
+        <di:waypoint x="535" y="270"/>
+        <di:waypoint x="535" y="440"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f7" bpmnElement="f7">
+        <di:waypoint x="560" y="245"/>
+        <di:waypoint x="635" y="245"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f8" bpmnElement="f8">
+        <di:waypoint x="845" y="245"/>
+        <di:waypoint x="910" y="245"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f9" bpmnElement="f9">
+        <di:waypoint x="814" y="308"/>
+        <di:waypoint x="814" y="390"/>
+        <di:waypoint x="935" y="390"/>
+        <di:waypoint x="935" y="270"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f10" bpmnElement="f10">
+        <di:waypoint x="670" y="480"/>
+        <di:waypoint x="935" y="480"/>
+        <di:waypoint x="935" y="270"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f11" bpmnElement="f11">
+        <di:waypoint x="960" y="245"/>
+        <di:waypoint x="1030" y="245"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f12" bpmnElement="f12">
+        <di:waypoint x="1270" y="245"/>
+        <di:waypoint x="1395" y="245"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f13" bpmnElement="f13">
+        <di:waypoint x="1239" y="308"/>
+        <di:waypoint x="1239" y="511"/>
+        <di:waypoint x="1370" y="511"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_m1" bpmnElement="m1">
+        <di:waypoint x="320" y="200"/>
+        <di:waypoint x="320" y="95"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_m2" bpmnElement="m2">
+        <di:waypoint x="380" y="95"/>
+        <di:waypoint x="380" y="200"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_m3" bpmnElement="m3">
+        <di:waypoint x="1110" y="200"/>
+        <di:waypoint x="1110" y="95"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_m4" bpmnElement="m4">
+        <di:waypoint x="1190" y="95"/>
+        <di:waypoint x="1190" y="200"/>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

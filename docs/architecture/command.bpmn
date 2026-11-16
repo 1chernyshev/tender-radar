@@ -1,0 +1,161 @@
+<?xml version='1.0' encoding='utf-8'?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_command" targetNamespace="https://tender-radar.local/model">
+  <bpmn:error id="StageError" name="Ненулевой результат стадии" errorCode="stage_failure"/>
+  <bpmn:process id="Process_command" name="Одна команда владельца — AS IS" isExecutable="false">
+    <bpmn:documentation>Модель обработки одного Update, не всего жизненного цикла long polling. Команды не запрашивают ЕИС.</bpmn:documentation>
+    <bpmn:startEvent id="Start" name="Обновление getUpdates">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+      <bpmn:messageEventDefinition/>
+    </bpmn:startEvent>
+    <bpmn:exclusiveGateway id="Owner" name="Личный чат владельца?">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:outgoing>f4</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:task id="Ignore" name="Игнорировать и сохранить offset">
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:subProcess id="Respond" name="Прочитать SQLite или изменить filter">
+      <bpmn:incoming>f4</bpmn:incoming>
+      <bpmn:outgoing>f5</bpmn:outgoing>
+    </bpmn:subProcess>
+    <bpmn:subProcess id="Send" name="Отправить ответ">
+      <bpmn:incoming>f5</bpmn:incoming>
+      <bpmn:outgoing>f6</bpmn:outgoing>
+    </bpmn:subProcess>
+    <bpmn:exclusiveGateway id="Ack" name="Доставлен?">
+      <bpmn:incoming>f6</bpmn:incoming>
+      <bpmn:outgoing>f7</bpmn:outgoing>
+      <bpmn:outgoing>f8</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:task id="Offset" name="Сохранить offset">
+      <bpmn:incoming>f8</bpmn:incoming>
+      <bpmn:outgoing>f9</bpmn:outgoing>
+    </bpmn:task>
+    <bpmn:endEvent id="End" name="Команда обработана">
+      <bpmn:incoming>f9</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="Retry" name="Offset не менять; повтор опроса">
+      <bpmn:incoming>f7</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="Ignored" name="Пропущено">
+      <bpmn:incoming>f3</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="Start" targetRef="Owner" name=""/>
+    <bpmn:sequenceFlow id="f2" sourceRef="Owner" targetRef="Ignore" name="нет"/>
+    <bpmn:sequenceFlow id="f3" sourceRef="Ignore" targetRef="Ignored" name=""/>
+    <bpmn:sequenceFlow id="f4" sourceRef="Owner" targetRef="Respond" name="да"/>
+    <bpmn:sequenceFlow id="f5" sourceRef="Respond" targetRef="Send" name=""/>
+    <bpmn:sequenceFlow id="f6" sourceRef="Send" targetRef="Ack" name=""/>
+    <bpmn:sequenceFlow id="f7" sourceRef="Ack" targetRef="Retry" name="нет"/>
+    <bpmn:sequenceFlow id="f8" sourceRef="Ack" targetRef="Offset" name="да"/>
+    <bpmn:sequenceFlow id="f9" sourceRef="Offset" targetRef="End" name=""/>
+  </bpmn:process>
+  <bpmn:collaboration id="Collaboration_command">
+    <bpmn:participant id="MainPool" name="Tender Radar" processRef="Process_command"/>
+    <bpmn:participant id="User" name="Пользователь"/>
+    <bpmn:participant id="TG" name="Telegram API"/>
+    <bpmn:messageFlow id="m1" sourceRef="User" targetRef="TG" name="команда"/>
+    <bpmn:messageFlow id="m2" sourceRef="TG" targetRef="Start" name="getUpdates"/>
+    <bpmn:messageFlow id="m3" sourceRef="Send" targetRef="TG" name="ответ"/>
+    <bpmn:messageFlow id="m4" sourceRef="TG" targetRef="User" name="показать ответ"/>
+  </bpmn:collaboration>
+  <bpmndi:BPMNDiagram id="Diagram_command">
+    <bpmndi:BPMNPlane id="Plane_command" bpmnElement="Collaboration_command">
+      <bpmndi:BPMNShape id="Shape_MainPool" bpmnElement="MainPool" isHorizontal="true">
+        <dc:Bounds x="20" y="155" width="1460" height="420"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_User" bpmnElement="User" isHorizontal="true">
+        <dc:Bounds x="20" y="15" width="480" height="75"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_TG" bpmnElement="TG" isHorizontal="true">
+        <dc:Bounds x="650" y="15" width="830" height="75"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Start" bpmnElement="Start">
+        <dc:Bounds x="65" y="265" width="42" height="42"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Owner" bpmnElement="Owner">
+        <dc:Bounds x="185" y="261" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Ignore" bpmnElement="Ignore">
+        <dc:Bounds x="170" y="450" width="220" height="75"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Respond" bpmnElement="Respond" isExpanded="false">
+        <dc:Bounds x="350" y="245" width="240" height="85"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Send" bpmnElement="Send" isExpanded="false">
+        <dc:Bounds x="680" y="245" width="185" height="85"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Ack" bpmnElement="Ack">
+        <dc:Bounds x="955" y="263" width="50" height="50"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Offset" bpmnElement="Offset">
+        <dc:Bounds x="1110" y="245" width="230" height="85"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_End" bpmnElement="End">
+        <dc:Bounds x="1400" y="265" width="42" height="42"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Retry" bpmnElement="Retry">
+        <dc:Bounds x="959" y="450" width="42" height="42"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Shape_Ignored" bpmnElement="Ignored">
+        <dc:Bounds x="495" y="466" width="42" height="42"/>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Edge_f1" bpmnElement="f1">
+        <di:waypoint x="107" y="286"/>
+        <di:waypoint x="185" y="286"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f2" bpmnElement="f2">
+        <di:waypoint x="210" y="311"/>
+        <di:waypoint x="210" y="450"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f3" bpmnElement="f3">
+        <di:waypoint x="390" y="488"/>
+        <di:waypoint x="495" y="488"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f4" bpmnElement="f4">
+        <di:waypoint x="235" y="286"/>
+        <di:waypoint x="350" y="286"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f5" bpmnElement="f5">
+        <di:waypoint x="590" y="287"/>
+        <di:waypoint x="680" y="287"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f6" bpmnElement="f6">
+        <di:waypoint x="865" y="287"/>
+        <di:waypoint x="955" y="287"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f7" bpmnElement="f7">
+        <di:waypoint x="980" y="313"/>
+        <di:waypoint x="980" y="450"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f8" bpmnElement="f8">
+        <di:waypoint x="1005" y="288"/>
+        <di:waypoint x="1110" y="288"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_f9" bpmnElement="f9">
+        <di:waypoint x="1340" y="287"/>
+        <di:waypoint x="1400" y="287"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_m1" bpmnElement="m1">
+        <di:waypoint x="500" y="52"/>
+        <di:waypoint x="650" y="52"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_m2" bpmnElement="m2">
+        <di:waypoint x="700" y="90"/>
+        <di:waypoint x="700" y="120"/>
+        <di:waypoint x="86" y="120"/>
+        <di:waypoint x="86" y="265"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_m3" bpmnElement="m3">
+        <di:waypoint x="760" y="245"/>
+        <di:waypoint x="760" y="90"/>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Edge_m4" bpmnElement="m4">
+        <di:waypoint x="650" y="75"/>
+        <di:waypoint x="500" y="75"/>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
