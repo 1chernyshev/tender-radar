@@ -67,6 +67,12 @@ class BotTests(unittest.TestCase):
         msg=self.ask('/stats'); self.assertIn('Контрактов: 3',msg); self.assertIn('2026-11-04: 1',msg)
         self.assertIn('100.00%',msg)
 
+    def test_interrupted_run_is_not_displayed_as_running(self):
+        self.db.conn.execute('CREATE TABLE fetch_runs(id INTEGER PRIMARY KEY, status TEXT, started_at TEXT)')
+        self.db.conn.execute("INSERT INTO fetch_runs(status,started_at) VALUES ('interrupted','2026-11-03 05:15:00')")
+        self.db.commit()
+        self.assertIn('Последний запуск сбора: прерван', self.ask('/stats'))
+
     def test_help_and_bad_count(self):
         self.assertIn('/filter',self.ask('/start'))
         self.assertIn('Неизвестная',self.ask('/oops'))

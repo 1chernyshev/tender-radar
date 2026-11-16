@@ -68,7 +68,7 @@ def data_note(conn, today):
     except sqlite3.OperationalError:
         run = None
     if run:
-        labels = {'running': 'выполняется', 'success': 'завершен', 'partial': 'частичный', 'failed': 'ошибка', 'interrupted': 'прерван (выявлено при следующем запуске)'}
+        labels = {'running': 'выполняется', 'success': 'завершен', 'partial': 'частичный', 'failed': 'ошибка', 'interrupted': 'прерван'}
         note += f' Последний запуск сбора: {labels.get(run[0], run[0])} ({run[1]} UTC).'
     return note
 

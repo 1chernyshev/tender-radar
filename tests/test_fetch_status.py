@@ -1,10 +1,13 @@
 import sys, tempfile, sqlite3, unittest, fcntl
+import argparse
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
 from tender_radar.db import Database
 from tender_radar.fetch_status import track_fetch, FetchAlreadyRunning
 from tender_radar import cli
+from tender_radar.client import BlockedError
+from tender_radar.parsers import parse_contract_card, parse_contract_search
 
 class FetchStatusTests(unittest.TestCase):
     def setUp(self):
@@ -54,4 +57,32 @@ class FetchStatusTests(unittest.TestCase):
         with patch.object(cli,'DB_PATH',self.path),patch.object(cli,'_fetch',side_effect=fail):
             with self.assertRaises(ValueError):cli.cmd_fetch(None)
         self.assertEqual(self.rows()[0][0],'partial')
+
+    def check_blocked_fetch(self, completed_cards):
+        fixtures = Path(__file__).parent / 'fixtures'
+        card_html = (fixtures / 'contract_card.html').read_text()
+        first_number = parse_contract_card(card_html)['reestr_number']
+        row = parse_contract_search((fixtures / 'search_page.html').read_text())[0]
+        first = dict(row, reestr_number=first_number)
+        second = dict(row, reestr_number='9999999999999999999')
+        args = argparse.Namespace(delay=0, keep_raw=False, date_from='14.11.2026',
+                                  date_to='15.11.2026', days=1, pages=1, cards=True)
+        replies = ['search'] + [card_html] * completed_cards + [BlockedError('blocked')]
+        with patch.object(cli, 'DB_PATH', self.path), patch.object(cli, 'EisClient') as client, \
+                patch.object(cli, 'parse_contract_search', return_value=[first, second]):
+            client.return_value.get.side_effect = replies
+            with self.assertRaises(SystemExit) as error:
+                cli.cmd_fetch(args)
+        self.assertEqual(error.exception.code, 2)
+        self.assertEqual(self.rows(), [('partial' if completed_cards else 'failed', completed_cards, 'BlockedError')])
+        # Незавершенная карточка не оставляет ни строки, ни блокировки записи.
+        self.assertEqual(self.db.conn.execute('SELECT COUNT(*) FROM contracts').fetchone()[0], completed_cards)
+        self.db.conn.execute("INSERT INTO contracts(reestr_number) VALUES ('after-error')")
+        self.db.commit()
+
+    def test_blocked_before_first_card_records_failure_without_locked_database(self):
+        self.check_blocked_fetch(0)
+
+    def test_blocked_after_committed_card_records_partial_without_locked_database(self):
+        self.check_blocked_fetch(1)
 if __name__=='__main__':unittest.main()

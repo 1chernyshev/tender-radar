@@ -6,6 +6,7 @@ import argparse
 import logging
 import random
 import time
+from contextlib import closing
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -59,7 +60,15 @@ def cmd_fetch(args: argparse.Namespace) -> None:
 
 def _fetch(args: argparse.Namespace) -> None:
     client = EisClient(delay=args.delay, raw_dir=RAW_DIR if args.keep_raw else None)
-    db = Database(DB_PATH)
+    # При отказе HTTP закрываем пишущее соединение до финализации fetch_runs.
+    # Незавершенный upsert откатывается; ранее зафиксированные карточки остаются.
+    with closing(client.session):
+        db = Database(DB_PATH)
+        with closing(db.conn):
+            _fetch_pages(args, client, db)
+
+
+def _fetch_pages(args: argparse.Namespace, client: EisClient, db: Database) -> None:
     date_to = _parse_date(args.date_to) if args.date_to else date.today()
     date_from = _parse_date(args.date_from) if args.date_from else date_to - timedelta(days=args.days)
     found = new_cards = 0
