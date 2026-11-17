@@ -140,7 +140,8 @@ def respond(text, db_path, state, today=None):
         week = conn.execute("SELECT date(first_seen_at,'localtime') AS day, COUNT(*) AS n FROM contracts WHERE date(first_seen_at,'localtime') BETWEEN ? AND ? GROUP BY day ORDER BY day", (since.isoformat(), today.isoformat())).fetchall()
         pct = f'{100 * (zero or 0) / known:.2f}%' if known else 'нет данных'
         return [f'<b>База на {today:%d.%m.%Y}</b>\n{note}\nКонтрактов: {total}; с карточками: {cards or 0}\n'
-                f'Поставщиков: {suppliers}; с почтой: {mail or 0}\nБез аванса: {pct} среди известных значений\n'
+                f'Поставщиков: {suppliers}; с почтой: {mail or 0}\nПринятый нулевой аванс: {pct} среди известных значений\n'
+                'Включает допущение нуля при отсутствующем поле; происхождение старых значений полностью не размечено.\n'
                 f'Новые контракты за 7 дней (по дате попадания в базу):\n' +
                 ('\n'.join(f'{r["day"]}: {r["n"]}' for r in week) or 'Нет новых записей.') +
                 '\nСтатистика по всей базе; фильтры не применяются. Это выборка, не весь рынок.']
